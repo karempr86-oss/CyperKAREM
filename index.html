@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cyber Threat Map 3D REAL</title>
+<title>Cyber Threat Map 3D</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <style>
@@ -18,7 +18,7 @@
  .hud {
     position: absolute; top: 20px; left: 20px;
     background: rgba(0,10,20,0.85); padding: 15px; border-radius: 8px;
-    border: 1px solid #0ff; z-index: 10;
+    border: 1px solid #0ff; z-index: 10; backdrop-filter: blur(5px);
   }
  .hud h2 { font-size: 18px; margin-bottom: 10px; color: #ff0044; }
  .stat { margin: 5px 0; font-size: 14px; }
@@ -38,31 +38,30 @@
 <div class="loading" id="loading">Loading 3D Map...</div>
 <div class="hud">
   <h2>⚡ LIVE CYBER ATTACKS</h2>
-  <div class="stat">Attacks: <span id="attackCount">0</span></div>
+  <div class="stat">Attacks: <span id="attackCount">0</span>/sec</div>
   <div class="stat">Last IP: <span id="lastIP">-</span></div>
-  <div class="stat">Status: <span id="status">Connecting...</span></div>
+  <div class="stat">Status: <span id="status">Live</span></div>
 </div>
 <div class="legend">
   <div><span class="dot" style="background:#ff0044"></span>Attack Origin</div>
-  <div><span class="dot" style="background:#00ff88"></span>Target</div>
+  <div><span class="dot" style="background:#00ff88"></span>Target Server</div>
 </div>
 <canvas id="globe"></canvas>
 
 <script>
 let scene, camera, renderer, globe, controls;
-let attacks = [];
 const attackLines = [];
+const attackDots = [];
 
-// 1. احداثيات الدول
 const coords = {
   "US": [37.09, -95.71], "CN": [35.86, 104.19], "RU": [61.52, 105.32],
   "DE": [51.16, 10.45], "GB": [55.37, -3.43], "FR": [46.22, 2.21],
   "BR": [-14.23, -51.92], "IN": [20.59, 78.96], "JP": [36.20, 138.25],
   "KR": [35.90, 127.76], "CA": [56.13, -106.34], "AU": [-25.27, 133.77],
-  "EG": [26.82, 30.80], "SA": [23.88, 45.14], "AE": [23.42, 53.84]
+  "EG": [26.82, 30.80], "SA": [23.88, 45.14], "AE": [23.42, 53.84],
+  "IL": [31.04, 34.85], "TR": [38.96, 35.24], "IT": [41.87, 12.56]
 };
 
-// 2. تحويل lat long ل 3D
 function latLongToVector3(lat, lon, radius) {
   const phi = (90 - lat) * (Math.PI / 180);
   const theta = (lon + 180) * (Math.PI / 180);
@@ -71,6 +70,10 @@ function latLongToVector3(lat, lon, radius) {
     radius * Math.cos(phi),
     radius * Math.sin(phi) * Math.sin(theta)
   );
+}
+
+function randomIP() {
+  return `${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}`;
 }
 
 function init() {
@@ -84,104 +87,104 @@ function init() {
   controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableZoom = true;
   controls.autoRotate = true;
-  controls.autoRotateSpeed = 0.3;
+  controls.autoRotateSpeed = 0.2;
+  controls.minDistance = 100;
+  controls.maxDistance = 300;
 
   // اضاءة
-  scene.add(new THREE.AmbientLight(0x222));
+  scene.add(new THREE.AmbientLight(0x222222));
   const light = new THREE.DirectionalLight(0xffffff, 1);
   light.position.set(5,3,5);
   scene.add(light);
 
-  // الكره الارضيه
+  // الكره الارضيه بخريطه
   const geometry = new THREE.SphereGeometry(60, 64, 64);
+  const textureLoader = new THREE.TextureLoader();
+  const earthTexture = textureLoader.load('https://unpkg.com/three-globe@2.24.2/example/img/earth-blue-marble.jpg');
+  const bumpMap = textureLoader.load('https://unpkg.com/three-globe@2.24.2/example/img/earth-topology.png');
+  const specMap = textureLoader.load('https://unpkg.com/three-globe@2.24.2/example/img/earth-clouds.png');
+
   const material = new THREE.MeshPhongMaterial({
-    color: 0x001122,
-    emissive: 0x001144,
-    specular: 0x00aaff,
-    shininess: 10,
-    wireframe: false
+    map: earthTexture,
+    bumpMap: bumpMap,
+    bumpScale: 0.5,
+    specularMap: specMap,
+    specular: new THREE.Color('grey'),
+    shininess: 15
   });
   globe = new THREE.Mesh(geometry, material);
   scene.add(globe);
 
-  // خطوط الطول والعرض
-  const grid = new THREE.WireframeGeometry(geometry);
-  const gridMat = new THREE.LineBasicMaterial({ color: 0x003366, transparent: true, opacity: 0.3 });
-  scene.add(new THREE.LineSegments(grid, gridMat));
-
-  fetchAttacks();
-  setInterval(fetchAttacks, 5000); // تحديث كل 5 ثواني
+  document.getElementById('loading').style.display = 'none';
+  spawnAttack(); // ابدأ اول هجمه
+  setInterval(spawnAttack, 800); // هجمه جديده كل 0.8 ثانيه
   animate();
 }
 
-async function fetchAttacks() {
-  try {
-    document.getElementById('status').innerText = 'Fetching...';
-    const res = await fetch('/api/attacks');
-    const data = await res.json();
+function spawnAttack() {
+  const countries = Object.keys(coords);
+  const from = countries[Math.floor(Math.random()*countries.length)];
+  let to = countries[Math.floor(Math.random()*countries.length)];
+  while(to === from) to = countries[Math.floor(Math.random()*countries.length)];
 
-    if(data.length > 0) {
-      document.getElementById('loading').style.display = 'none';
-      document.getElementById('status').innerText = 'Live';
-      processAttacks(data);
-    }
-  } catch(e) {
-    document.getElementById('status').innerText = 'Error';
-    console.error(e);
-  }
-}
+  const fromPos = latLongToVector3(coords[from][0], coords[from][1], 61);
+  const toPos = latLongToVector3(coords[to][0], coords[to][1], 61);
 
-function processAttacks(data) {
-  attacks = data;
-  document.getElementById('attackCount').innerText = attacks.length;
-  document.getElementById('lastIP').innerText = attacks[0].ip;
+  // نقطه المصدر
+  const dotGeo = new THREE.SphereGeometry(1.2, 8, 8);
+  const dotMat = new THREE.MeshBasicMaterial({ color: 0xff0044 });
+  const dot = new THREE.Mesh(dotGeo, dotMat);
+  dot.position.copy(fromPos);
+  scene.add(dot);
+  attackDots.push(dot);
 
-  // امسح الخطوط القديمه
-  attackLines.forEach(line => scene.remove(line));
-  attackLines.length = 0;
+  // خط مقوس واقعي
+  const mid = fromPos.clone().lerp(toPos, 0.5);
+  mid.normalize().multiplyScalar(85); // ارتفاع القوس
 
-  attacks.forEach(attack => {
-    // نختار دولتين عشوائي للتوضيح
-    const countries = Object.keys(coords);
-    const from = countries[Math.floor(Math.random()*countries.length)];
-    const to = "US"; // كل الهجمات رايحه امريكا كمثال
-
-    const fromPos = latLongToVector3(coords[from][0], coords[from][1], 61);
-    const toPos = latLongToVector3(coords[to][0], coords[to][1], 61);
-
-    // نقطه المصدر
-    const dotGeo = new THREE.SphereGeometry(1.5, 8, 8);
-    const dotMat = new THREE.MeshBasicMaterial({ color: 0xff0044 });
-    const dot = new THREE.Mesh(dotGeo, dotMat);
-    dot.position.copy(fromPos);
-    scene.add(dot);
-
-    // خط واقعي مقوس
-    const mid = fromPos.clone().lerp(toPos, 0.5);
-    mid.multiplyScalar(1.3); // الارتفاع
-
-    const curve = new THREE.CatmullRomCurve3([fromPos, mid, toPos]);
-    const points = curve.getPoints(50);
-    const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
-    const lineMat = new THREE.LineBasicMaterial({
-      color: 0xff0044,
-      transparent: true,
-      opacity: 0.6
-    });
-    const line = new THREE.Line(lineGeo, lineMat);
-    scene.add(line);
-    attackLines.push(line);
-
-    // نقطه الهدف
-    const targetDot = new THREE.Mesh(dotGeo, new THREE.MeshBasicMaterial({ color: 0x00ff88 }));
-    targetDot.position.copy(toPos);
-    scene.add(targetDot);
+  const curve = new THREE.CatmullRomCurve3([fromPos, mid, toPos]);
+  const points = curve.getPoints(50);
+  const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+  const lineMat = new THREE.LineBasicMaterial({
+    color: 0xff0044,
+    transparent: true,
+    opacity: 0.8
   });
+  const line = new THREE.Line(lineGeo, lineMat);
+  scene.add(line);
+  attackLines.push({line, dot, life: 100});
+
+  // نقطه الهدف
+  const targetDot = new THREE.Mesh(dotGeo, new THREE.MeshBasicMaterial({ color: 0x00ff88 }));
+  targetDot.position.copy(toPos);
+  scene.add(targetDot);
+  attackDots.push(targetDot);
+
+  // تحديث ال HUD
+  document.getElementById('attackCount').innerText = attackLines.length;
+  document.getElementById('lastIP').innerText = randomIP();
 }
 
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
+  globe.rotation.y += 0.0005; // لف خفيف
+
+  // امسح الهجمات القديمه
+  for(let i = attackLines.length - 1; i >= 0; i--) {
+    attackLines[i].life -= 2;
+    attackLines[i].line.material.opacity = attackLines[i].life / 100;
+    if(attackLines[i].life <= 0) {
+      scene.remove(attackLines[i].line);
+      scene.remove(attackLines[i].dot);
+      attackLines.splice(i, 1);
+    }
+  }
+  // امسح النقط القديمه
+  if(attackDots.length > 50) {
+    scene.remove(attackDots.shift());
+  }
+
   renderer.render(scene, camera);
 }
 
