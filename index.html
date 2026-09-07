@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cyber Threat Map 3D</title>
+<title>Cyber Threat Map 3D Interactive</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <style>
@@ -14,21 +14,32 @@
     font-family: 'Courier New', monospace;
     overflow: hidden;
   }
-  #globe { width: 100%; height: 100vh; }
- .hud {
+  #globe { width: 100%; height: 100vh; cursor: grab; }
+  #globe:active { cursor: grabbing; }
+.hud {
     position: absolute; top: 20px; left: 20px;
     background: rgba(0,10,20,0.85); padding: 15px; border-radius: 8px;
-    border: 1px solid #0ff; z-index: 10; backdrop-filter: blur(5px);
+    border: 1px solid #0ff; z-index: 10; backdrop-filter: blur(5px); min-width: 300px;
   }
- .hud h2 { font-size: 18px; margin-bottom: 10px; color: #ff0044; }
- .stat { margin: 5px 0; font-size: 14px; }
- .legend {
+.hud h2 { font-size: 18px; margin-bottom: 10px; color: #ff0044; }
+.stat { margin: 5px 0; font-size: 14px; }
+.attack-log {
+    margin-top: 10px; max-height: 150px; overflow-y: auto; font-size: 12px;
+    border-top: 1px solid #0ff; padding-top: 5px;
+  }
+.log-item { color: #ffaa00; margin: 3px 0; }
+.tooltip {
+    position: absolute; background: rgba(0,255,255,0.9); color: #000;
+    padding: 5px 10px; border-radius: 4px; font-size: 12px;
+    pointer-events: none; z-index: 20; display: none; font-weight: bold;
+  }
+.legend {
     position: absolute; bottom: 20px; left: 20px;
     background: rgba(0,10,20,0.85); padding: 10px; border-radius: 8px;
     border: 1px solid #0ff; z-index: 10; font-size: 12px;
   }
- .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
- .loading {
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+.loading {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
     color: #0ff; font-size: 20px; z-index: 10;
   }
@@ -36,30 +47,50 @@
 </head>
 <body>
 <div class="loading" id="loading">Loading 3D Map...</div>
+<div class="tooltip" id="tooltip"></div>
 <div class="hud">
   <h2>⚡ LIVE CYBER ATTACKS</h2>
-  <div class="stat">Attacks: <span id="attackCount">0</span>/sec</div>
-  <div class="stat">Last IP: <span id="lastIP">-</span></div>
-  <div class="stat">Status: <span id="status">Live</span></div>
+  <div class="stat">Active: <span id="attackCount">0</span></div>
+  <div class="stat">From: <span id="fromCountry">-</span></div>
+  <div class="stat">To: <span id="toCountry">-</span></div>
+  <div class="stat">IP: <span id="lastIP">-</span></div>
+  <div class="stat">Selected: <span id="selectedCountry">Click globe</span></div>
+  <div class="attack-log" id="log"></div>
 </div>
 <div class="legend">
   <div><span class="dot" style="background:#ff0044"></span>Attack Origin</div>
-  <div><span class="dot" style="background:#00ff88"></span>Target Server</div>
+  <div><span class="dot" style="background:#00ff88"></span>Target</div>
+  <div><span class="dot" style="background:#ffff00"></span>Selected</div>
 </div>
 <canvas id="globe"></canvas>
 
 <script>
-let scene, camera, renderer, globe, controls;
+let scene, camera, renderer, globe, controls, raycaster, mouse;
+let selectedMarker = null;
 const attackLines = [];
 const attackDots = [];
 
-const coords = {
-  "US": [37.09, -95.71], "CN": [35.86, 104.19], "RU": [61.52, 105.32],
-  "DE": [51.16, 10.45], "GB": [55.37, -3.43], "FR": [46.22, 2.21],
-  "BR": [-14.23, -51.92], "IN": [20.59, 78.96], "JP": [36.20, 138.25],
-  "KR": [35.90, 127.76], "CA": [56.13, -106.34], "AU": [-25.27, 133.77],
-  "EG": [26.82, 30.80], "SA": [23.88, 45.14], "AE": [23.42, 53.84],
-  "IL": [31.04, 34.85], "TR": [38.96, 35.24], "IT": [41.87, 12.56]
+const countries = {
+  "US": {name: "United States", pos: [37.09, -95.71]},
+  "CN": {name: "China", pos: [35.86, 104.19]},
+  "RU": {name: "Russia", pos: [61.52, 105.32]},
+  "DE": {name: "Germany", pos: [51.16, 10.45]},
+  "GB": {name: "United Kingdom", pos: [55.37, -3.43]},
+  "FR": {name: "France", pos: [46.22, 2.21]},
+  "BR": {name: "Brazil", pos: [-14.23, -51.92]},
+  "IN": {name: "India", pos: [20.59, 78.96]},
+  "JP": {name: "Japan", pos: [36.20, 138.25]},
+  "KR": {name: "South Korea", pos: [35.90, 127.76]},
+  "CA": {name: "Canada", pos: [56.13, -106.34]},
+  "AU": {name: "Australia", pos: [-25.27, 133.77]},
+  "EG": {name: "Egypt", pos: [26.82, 30.80]},
+  "SA": {name: "Saudi Arabia", pos: [23.88, 45.14]},
+  "AE": {name: "UAE", pos: [23.42, 53.84]},
+  "IL": {name: "Israel", pos: [31.04, 34.85]},
+  "TR": {name: "Turkey", pos: [38.96, 35.24]},
+  "IT": {name: "Italy", pos: [41.87, 12.56]},
+  "NL": {name: "Netherlands", pos: [52.13, 5.29]},
+  "SG": {name: "Singapore", pos: [1.35, 103.81]}
 };
 
 function latLongToVector3(lat, lon, radius) {
@@ -76,6 +107,15 @@ function randomIP() {
   return `${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}`;
 }
 
+function addLog(from, to, ip) {
+  const log = document.getElementById('log');
+  const item = document.createElement('div');
+  item.className = 'log-item';
+  item.innerText = `${from} → ${to} | ${ip}`;
+  log.prepend(item);
+  if(log.children.length > 5) log.removeChild(log.lastChild);
+}
+
 function init() {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 1000);
@@ -87,12 +127,14 @@ function init() {
   controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableZoom = true;
   controls.autoRotate = true;
-  controls.autoRotateSpeed = 0.2;
+  controls.autoRotateSpeed = 0.1;
   controls.minDistance = 100;
   controls.maxDistance = 300;
 
-  // اضاءة
-  scene.add(new THREE.AmbientLight(0x222222));
+  raycaster = new THREE.Raycaster();
+  mouse = new THREE.Vector2();
+
+  scene.add(new THREE.AmbientLight(0x222));
   const light = new THREE.DirectionalLight(0xffffff, 1);
   light.position.set(5,3,5);
   scene.add(light);
@@ -116,73 +158,143 @@ function init() {
   scene.add(globe);
 
   document.getElementById('loading').style.display = 'none';
-  spawnAttack(); // ابدأ اول هجمه
-  setInterval(spawnAttack, 800); // هجمه جديده كل 0.8 ثانيه
+  spawnAttack();
+  setInterval(spawnAttack, 1500);
   animate();
+
+  // حدث الكلك
+  document.getElementById('globe').addEventListener('click', onMouseClick);
+  document.getElementById('globe').addEventListener('mousemove', onMouseMove);
+}
+
+function onMouseMove(event) {
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObject(globe);
+
+  const tooltip = document.getElementById('tooltip');
+  if(intersects.length > 0) {
+    const point = intersects[0].point;
+    // نجيب اقرب دوله
+    let closest = null, minDist = 999;
+    for(let key in countries) {
+      const pos = latLongToVector3(countries[key].pos[0], countries[key].pos[1], 60);
+      const dist = point.distanceTo(pos);
+      if(dist < minDist) { minDist = dist; closest = countries[key]; }
+    }
+    if(minDist < 8 && closest) {
+      tooltip.style.display = 'block';
+      tooltip.style.left = event.clientX + 15 + 'px';
+      tooltip.style.top = event.clientY + 'px';
+      tooltip.innerText = closest.name;
+    } else {
+      tooltip.style.display = 'none';
+    }
+  } else {
+    tooltip.style.display = 'none';
+  }
+}
+
+function onMouseClick(event) {
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObject(globe);
+
+  if(intersects.length > 0) {
+    const point = intersects[0].point;
+    // نجيب اقرب دوله
+    let closest = null, minDist = 999, closestKey = null;
+    for(let key in countries) {
+      const pos = latLongToVector3(countries[key].pos[0], countries[key].pos[1], 60);
+      const dist = point.distanceTo(pos);
+      if(dist < minDist) { minDist = dist; closest = countries[key]; closestKey = key; }
+    }
+
+    if(minDist < 8 && closest) {
+      document.getElementById('selectedCountry').innerText = closest.name;
+
+      // امسح العلامه القديمه
+      if(selectedMarker) scene.remove(selectedMarker);
+
+      // حط علامه صفرا جديده
+      const markerGeo = new THREE.SphereGeometry(2.5, 12, 12);
+      const markerMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+      selectedMarker = new THREE.Mesh(markerGeo, markerMat);
+      selectedMarker.position.copy(latLongToVector3(closest.pos[0], closest.pos[1], 62));
+      scene.add(selectedMarker);
+    }
+  }
 }
 
 function spawnAttack() {
-  const countries = Object.keys(coords);
-  const from = countries[Math.floor(Math.random()*countries.length)];
-  let to = countries[Math.floor(Math.random()*countries.length)];
-  while(to === from) to = countries[Math.floor(Math.random()*countries.length)];
+  const keys = Object.keys(countries);
+  const fromKey = keys[Math.floor(Math.random()*keys.length)];
+  let toKey = keys[Math.floor(Math.random()*keys.length)];
+  while(toKey === fromKey) toKey = keys[Math.floor(Math.random()*keys.length)];
 
-  const fromPos = latLongToVector3(coords[from][0], coords[from][1], 61);
-  const toPos = latLongToVector3(coords[to][0], coords[to][1], 61);
+  const from = countries[fromKey];
+  const to = countries[toKey];
+  const ip = randomIP();
 
-  // نقطه المصدر
-  const dotGeo = new THREE.SphereGeometry(1.2, 8, 8);
+  document.getElementById('fromCountry').innerText = from.name;
+  document.getElementById('toCountry').innerText = to.name;
+  document.getElementById('lastIP').innerText = ip;
+  addLog(from.name, to.name, ip);
+
+  const fromPos = latLongToVector3(from.pos[0], from.pos[1], 61);
+  const toPos = latLongToVector3(to.pos[0], to.pos[1], 61);
+
+  const dotGeo = new THREE.SphereGeometry(1.5, 8, 8);
   const dotMat = new THREE.MeshBasicMaterial({ color: 0xff0044 });
   const dot = new THREE.Mesh(dotGeo, dotMat);
   dot.position.copy(fromPos);
   scene.add(dot);
-  attackDots.push(dot);
 
-  // خط مقوس واقعي
   const mid = fromPos.clone().lerp(toPos, 0.5);
-  mid.normalize().multiplyScalar(85); // ارتفاع القوس
+  mid.normalize().multiplyScalar(80 + Math.random()*10);
 
   const curve = new THREE.CatmullRomCurve3([fromPos, mid, toPos]);
-  const points = curve.getPoints(50);
+  const points = curve.getPoints(60);
   const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
-  const lineMat = new THREE.LineBasicMaterial({
-    color: 0xff0044,
-    transparent: true,
-    opacity: 0.8
-  });
+  const lineMat = new THREE.LineBasicMaterial({ color: 0xff0044, transparent: true, opacity: 0.9 });
   const line = new THREE.Line(lineGeo, lineMat);
   scene.add(line);
-  attackLines.push({line, dot, life: 100});
+  attackLines.push({line, dot, life: 120});
 
-  // نقطه الهدف
   const targetDot = new THREE.Mesh(dotGeo, new THREE.MeshBasicMaterial({ color: 0x00ff88 }));
   targetDot.position.copy(toPos);
   scene.add(targetDot);
   attackDots.push(targetDot);
 
-  // تحديث ال HUD
   document.getElementById('attackCount').innerText = attackLines.length;
-  document.getElementById('lastIP').innerText = randomIP();
 }
 
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
-  globe.rotation.y += 0.0005; // لف خفيف
+  globe.rotation.y += 0.0003;
 
-  // امسح الهجمات القديمه
   for(let i = attackLines.length - 1; i >= 0; i--) {
     attackLines[i].life -= 2;
-    attackLines[i].line.material.opacity = attackLines[i].life / 100;
+    attackLines[i].line.material.opacity = attackLines[i].life / 120;
+    const scale = 1 + (120 - attackLines[i].life) * 0.01;
+    attackLines[i].dot.scale.set(scale, scale, scale);
+
     if(attackLines[i].life <= 0) {
       scene.remove(attackLines[i].line);
       scene.remove(attackLines[i].dot);
       attackLines.splice(i, 1);
     }
   }
-  // امسح النقط القديمه
-  if(attackDots.length > 50) {
+  if(attackDots.length > 60) {
     scene.remove(attackDots.shift());
+  }
+  if(selectedMarker) {
+    selectedMarker.scale.set(1 + Math.sin(Date.now()*0.005)*0.2, 1 + Math.sin(Date.now()*0.005)*0.2, 1 + Math.sin(Date.now()*0.005)*0.2);
   }
 
   renderer.render(scene, camera);
