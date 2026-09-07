@@ -2,11 +2,11 @@ const fetch = require('node-fetch');
 
 export default async function handler(req, res) {
   // حط المفتاح هنا او في Environment Variables بتاع Vercel
-  const ABUSEIPDB_KEY = process.dd37f6972c92a19b1150c468f6231a70efcd94946405909f361c19e4eafab3e3b81894cb5d917199;
+  const ABUSEIPDB_KEY = process.env.ABUSEIPDB_KEY;
 
   try {
     const response = await fetch('https://api.abuseipdb.com/api/v2/blacklist?confidenceMinimum=90&limit=20', {
-      headers: { 'Key': ABUSEIPDB_KEY, 'Accept'dd37f6972c92a19b1150c468f6231a70efcd94946405909f361c19e4eafab3e3b81894cb5d917199' }
+      headers: { 'Key': ABUSEIPDB_KEY, 'Accept': 'application/json' }
     });
     const data = await response.json();
     res.status(200).json(data.data);
