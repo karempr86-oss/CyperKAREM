@@ -1,0 +1,10 @@
+{
+  "name": "cyber-threat-map",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.12"
+  }
+}
